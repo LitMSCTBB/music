@@ -10,28 +10,53 @@ const MAX_CACHE_ENTRIES = 20;
 
 app.use(cors());
 
+const logInfo = (message, meta = {}) => {
+  const timestamp = new Date().toISOString();
+  if (Object.keys(meta).length) {
+    console.log(`[${timestamp}] ${message}`, meta);
+  } else {
+    console.log(`[${timestamp}] ${message}`);
+  }
+};
+
+const normalizeSongTitle = (value) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const scoreCandidate = (candidate, query) => {
+  const normalizedQuery = normalizeSongTitle(query);
+  const normalizedCandidate = normalizeSongTitle(candidate);
+  if (!normalizedCandidate) {
+    return 0;
+  }
+  if (normalizedCandidate.includes(normalizedQuery)) {
+    return 1;
+  }
+  const queryParts = normalizedQuery.split(" ");
+  const candidateParts = normalizedCandidate.split(" ");
+  const matches = queryParts.filter((part) => candidateParts.includes(part)).length;
+  return matches / Math.max(queryParts.length, 1);
+};
+
+const pickBestCandidate = (candidates, query) => {
+  const scored = candidates
+    .map((candidate) => ({
+      candidate,
+      score: scoreCandidate(candidate, query)
+    }))
+    .sort((a, b) => b.score - a.score);
+  return scored;
+};
+
 const pruneCache = () => {
   if (MIDI_CACHE.size <= MAX_CACHE_ENTRIES) {
     return;
   }
   const [oldestKey] = MIDI_CACHE.keys();
   MIDI_CACHE.delete(oldestKey);
-};
-
-const pickBestMidiLink = (html) => {
-  const $ = load(html);
-  const links = [];
-  $("a[href$='.mid']").each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      links.push(href);
-    }
-  });
-  if (!links.length) {
-    return null;
-  }
-  const preferred = links.find((link) => link.toLowerCase().includes(".mid"));
-  return preferred || links[0];
 };
 
 const ensureAbsoluteUrl = (baseUrl, url) => {
@@ -47,16 +72,31 @@ const ensureAbsoluteUrl = (baseUrl, url) => {
 const fetchMidiFromBitMidi = async (song) => {
   // BitMidi search results include direct .mid links.
   const searchUrl = `https://bitmidi.com/search?q=${encodeURIComponent(song)}`;
+  logInfo("BitMidi search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
     throw new Error("BitMidi search failed");
   }
   const html = await searchResponse.text();
-  const midiPath = pickBestMidiLink(html);
-  if (!midiPath) {
+  const $ = load(html);
+  const candidates = [];
+  $("a[href$='.mid']").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href) {
+      candidates.push(href);
+    }
+  });
+  if (!candidates.length) {
+    logInfo("BitMidi returned no midi links");
     return null;
   }
-  const midiUrl = ensureAbsoluteUrl("https://bitmidi.com", midiPath);
+  const ranked = pickBestCandidate(candidates, song);
+  logInfo("BitMidi candidates", {
+    total: ranked.length,
+    top: ranked.slice(0, 5)
+  });
+  const midiUrl = ensureAbsoluteUrl("https://bitmidi.com", ranked[0].candidate);
+  logInfo("BitMidi selected candidate", { midiUrl });
   const midiResponse = await fetch(midiUrl);
   if (!midiResponse.ok) {
     throw new Error("MIDI download failed");
@@ -71,6 +111,7 @@ const fetchMidiFromBitMidi = async (song) => {
 const fetchMidiFromFreeMidi = async (song) => {
   // FreeMidi search uses query string, links often end in .mid.
   const searchUrl = `https://freemidi.org/search?q=${encodeURIComponent(song)}`;
+  logInfo("FreeMidi search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
     return null;
@@ -85,9 +126,16 @@ const fetchMidiFromFreeMidi = async (song) => {
     }
   });
   if (!candidates.length) {
+    logInfo("FreeMidi returned no midi links");
     return null;
   }
-  const midiUrl = ensureAbsoluteUrl("https://freemidi.org", candidates[0]);
+  const ranked = pickBestCandidate(candidates, song);
+  logInfo("FreeMidi candidates", {
+    total: ranked.length,
+    top: ranked.slice(0, 5)
+  });
+  const midiUrl = ensureAbsoluteUrl("https://freemidi.org", ranked[0].candidate);
+  logInfo("FreeMidi selected candidate", { midiUrl });
   const midiResponse = await fetch(midiUrl);
   if (!midiResponse.ok) {
     return null;
@@ -102,17 +150,28 @@ const fetchMidiFromFreeMidi = async (song) => {
 const fetchMidiFromMidiDb = async (song) => {
   // MidiDB provides a format=mid link for direct downloads.
   const searchUrl = `https://www.mididb.com/search/${encodeURIComponent(song)}/?format=short`;
+  logInfo("MidiDB search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
     return null;
   }
   const html = await searchResponse.text();
   const $ = load(html);
-  const firstLink = $("a[href*='?format=mid']").first().attr("href");
-  if (!firstLink) {
+  const links = $("a[href*='?format=mid']")
+    .map((_, el) => $(el).attr("href"))
+    .get()
+    .filter(Boolean);
+  if (!links.length) {
+    logInfo("MidiDB returned no midi links");
     return null;
   }
-  const midiUrl = ensureAbsoluteUrl("https://www.mididb.com", firstLink);
+  const ranked = pickBestCandidate(links, song);
+  logInfo("MidiDB candidates", {
+    total: ranked.length,
+    top: ranked.slice(0, 5)
+  });
+  const midiUrl = ensureAbsoluteUrl("https://www.mididb.com", ranked[0].candidate);
+  logInfo("MidiDB selected candidate", { midiUrl });
   const midiResponse = await fetch(midiUrl);
   if (!midiResponse.ok) {
     return null;
@@ -127,6 +186,7 @@ const fetchMidiFromMidiDb = async (song) => {
 const fetchMidiFromMidiWorld = async (song) => {
   // MidiWorld supports filename-based searches.
   const searchUrl = `https://www.midiworld.com/search/${encodeURIComponent(song)}/`;
+  logInfo("MidiWorld search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
     return null;
@@ -141,9 +201,16 @@ const fetchMidiFromMidiWorld = async (song) => {
     }
   });
   if (!candidates.length) {
+    logInfo("MidiWorld returned no midi links");
     return null;
   }
-  const midiUrl = ensureAbsoluteUrl("https://www.midiworld.com", candidates[0]);
+  const ranked = pickBestCandidate(candidates, song);
+  logInfo("MidiWorld candidates", {
+    total: ranked.length,
+    top: ranked.slice(0, 5)
+  });
+  const midiUrl = ensureAbsoluteUrl("https://www.midiworld.com", ranked[0].candidate);
+  logInfo("MidiWorld selected candidate", { midiUrl });
   const midiResponse = await fetch(midiUrl);
   if (!midiResponse.ok) {
     return null;
@@ -163,16 +230,21 @@ const fetchMidiFromSources = async (song) => {
     { name: "MidiWorld", handler: fetchMidiFromMidiWorld }
   ];
 
+  logInfo("Starting MIDI lookup", { song });
   for (const source of sources) {
     try {
+      logInfo("Searching source", { source: source.name });
       const result = await source.handler(song);
       if (result) {
+        logInfo("MIDI found", { source: source.name, url: result.sourceUrl });
         return { ...result, source: source.name };
       }
+      logInfo("No MIDI found in source", { source: source.name });
     } catch (error) {
-      console.warn(`${source.name} lookup failed`, error.message);
+      logInfo("Source lookup failed", { source: source.name, error: error.message });
     }
   }
+  logInfo("No MIDI found in any source", { song });
   return null;
 };
 
