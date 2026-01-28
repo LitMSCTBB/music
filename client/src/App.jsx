@@ -304,7 +304,16 @@ export default function App() {
     try {
       const response = await fetch(`/api/find-midi?song=${encodeURIComponent(songQuery)}`);
       if (!response.ok) {
-        throw new Error("No MIDI found. Try another song or upload one manually.");
+        let message = "No MIDI found. Try another song or upload one manually.";
+        try {
+          const payload = await response.json();
+          if (payload?.error) {
+            message = payload.error;
+          }
+        } catch (error) {
+          console.warn("Unable to parse MIDI error response", error);
+        }
+        throw new Error(message);
       }
       const arrayBuffer = await response.arrayBuffer();
       handleMidiArrayBuffer(arrayBuffer, songQuery);
