@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/fetch-midi": "http://localhost:5174"
+      "/api": "http://localhost:5174"
     }
   }
 });

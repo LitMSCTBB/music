@@ -100,6 +100,8 @@ export default function App() {
   const [notes, setNotes] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("Enter a song to start.");
+  const [showUpload, setShowUpload] = useState(false);
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [feedback, setFeedback] = useState("WAITING");
@@ -148,41 +150,11 @@ export default function App() {
     };
   }, []);
 
-  const handleSearch = async (event) => {
-    event.preventDefault();
-    if (!songQuery) {
-      return;
-    }
-    setIsLoading(true);
-    setError("");
-    setCelebrate(false);
-    setNotes([]);
-    setScore(0);
-    setStreak(0);
-    setFeedback("WAITING");
-
-    try {
-      const response = await fetch(`/fetch-midi?song=${encodeURIComponent(songQuery)}`);
-      if (!response.ok) {
-        throw new Error("No MIDI found. Try another song.");
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      const midi = new Midi(arrayBuffer);
-      const melody = extractMelody(midi);
-      if (!melody.length) {
-        throw new Error("MIDI parsed but no melody track was detected.");
-      }
-      setNotes(melody);
-      setSongTitle(songQuery);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const stopListening = () => {
     setIsListening(false);
+    if (notes.length) {
+      setStatus("Stopped. Ready when you are.");
+    }
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
     }
@@ -203,6 +175,7 @@ export default function App() {
     }
     setError("");
     setCelebrate(false);
+    setStatus("Listening... sing along!");
     pointerRef.current = 0;
     scoreTimeRef.current = 0;
     stableFramesRef.current = 0;
@@ -235,8 +208,7 @@ export default function App() {
         const midiValue = hzToMidi(frequency);
         setCurrentPitch(midiValue);
         if (expected) {
-          const expectedHz = 440 * Math.pow(2, (expected.midi - 69) / 12);
-          const cents = 1200 * Math.log2(frequency / expectedHz);
+          const cents = (midiValue - expected.midi) * 100;
           const error = Math.abs(cents);
           let points = 0;
           let label = "OFF";
@@ -303,6 +275,68 @@ export default function App() {
     return notes.slice(start, end);
   }, [notes, targetPitch]);
 
+  const handleMidiArrayBuffer = (arrayBuffer, titleOverride) => {
+    const midi = new Midi(arrayBuffer);
+    const melody = extractMelody(midi);
+    if (!melody.length) {
+      throw new Error("MIDI parsed but no melody track was detected.");
+    }
+    setNotes(melody);
+    setSongTitle(titleOverride || songQuery);
+    setStatus("MIDI loaded. Ready to sing!");
+    setShowUpload(false);
+  };
+
+  const handleSearch = async (event) => {
+    event.preventDefault();
+    if (!songQuery) {
+      return;
+    }
+    setIsLoading(true);
+    setError("");
+    setStatus("Searching for MIDI...");
+    setCelebrate(false);
+    setNotes([]);
+    setScore(0);
+    setStreak(0);
+    setFeedback("WAITING");
+
+    try {
+      const response = await fetch(`/api/find-midi?song=${encodeURIComponent(songQuery)}`);
+      if (!response.ok) {
+        throw new Error("No MIDI found. Try another song or upload one manually.");
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      handleMidiArrayBuffer(arrayBuffer, songQuery);
+    } catch (err) {
+      setError(err.message);
+      setStatus("No MIDI found. Drag and drop a file below.");
+      setShowUpload(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpload = async (file) => {
+    if (!file) {
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".mid")) {
+      setError("Please upload a .mid file.");
+      return;
+    }
+    setError("");
+    setStatus("Parsing uploaded MIDI...");
+    const arrayBuffer = await file.arrayBuffer();
+    handleMidiArrayBuffer(arrayBuffer, file.name.replace(/\\.mid$/i, ""));
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    handleUpload(file);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-midnight via-slate-950 to-black px-6 py-8 text-white">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
@@ -326,18 +360,42 @@ export default function App() {
             className="rounded-full bg-neon px-8 py-3 text-lg font-semibold text-midnight shadow-glow transition hover:scale-[1.02]"
             disabled={isLoading}
           >
-            {isLoading ? "Searching..." : "Search"}
+            {isLoading ? "Searching..." : "Search MIDI"}
           </button>
           <button
             type="button"
             onClick={isListening ? stopListening : startListening}
             className="rounded-full border border-magenta px-8 py-3 text-lg font-semibold text-magenta transition hover:bg-magenta hover:text-midnight"
+            disabled={!notes.length}
           >
             {isListening ? "Stop" : "Start Singing"}
           </button>
         </form>
 
+        <p className="text-sm text-slate-300">{status}</p>
         {error && <p className="text-sm text-red-300">{error}</p>}
+
+        {showUpload && (
+          <div
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleDrop}
+            className="glass rounded-3xl border border-dashed border-slate-700 p-6 text-center"
+          >
+            <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Manual MIDI Upload</p>
+            <p className="mt-3 text-base text-slate-200">
+              Drag & drop a .mid file here, or click to select one.
+            </p>
+            <label className="mt-4 inline-block cursor-pointer rounded-full border border-neon px-6 py-2 text-sm font-semibold text-neon">
+              Choose File
+              <input
+                type="file"
+                accept=".mid"
+                className="hidden"
+                onChange={(event) => handleUpload(event.target.files[0])}
+              />
+            </label>
+          </div>
+        )}
 
         <section className="grid gap-4 md:grid-cols-3">
           {[
@@ -385,7 +443,13 @@ export default function App() {
               {currentPitch && targetPitch && (
                 <motion.div
                   layout
-                  className="absolute right-8 h-4 w-4 rounded-full bg-magenta shadow-glow"
+                  className={`absolute right-8 h-4 w-4 rounded-full shadow-glow ${
+                    feedback === "ON NOTE"
+                      ? "bg-emerald-400"
+                      : feedback === "CLOSE"
+                        ? "bg-yellow-300"
+                        : "bg-magenta"
+                  }`}
                   style={{ top: `calc(50% - ${(currentPitch - targetPitch) * 4}px)` }}
                 />
               )}
