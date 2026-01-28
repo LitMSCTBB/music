@@ -148,8 +148,8 @@ const fetchMidiFromFreeMidi = async (song) => {
 };
 
 const fetchMidiFromMidiDb = async (song) => {
-  // MidiDB provides a format=mid link for direct downloads.
-  const searchUrl = `https://www.mididb.com/search/${encodeURIComponent(song)}/?format=short`;
+  // MidiDB search endpoint: https://www.mididb.com/search.asp?q=...&formatID=1
+  const searchUrl = `https://www.mididb.com/search.asp?q=${encodeURIComponent(song)}&formatID=1`;
   logInfo("MidiDB search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
@@ -157,10 +157,16 @@ const fetchMidiFromMidiDb = async (song) => {
   }
   const html = await searchResponse.text();
   const $ = load(html);
-  const links = $("a[href*='?format=mid']")
+  const links = $("a[href]")
     .map((_, el) => $(el).attr("href"))
     .get()
-    .filter(Boolean);
+    .filter(
+      (href) =>
+        href &&
+        (href.toLowerCase().includes(".mid") ||
+          href.toLowerCase().includes("formatid=1") ||
+          href.toLowerCase().includes("format=mid"))
+    );
   if (!links.length) {
     logInfo("MidiDB returned no midi links");
     return null;
@@ -184,8 +190,8 @@ const fetchMidiFromMidiDb = async (song) => {
 };
 
 const fetchMidiFromMidiWorld = async (song) => {
-  // MidiWorld supports filename-based searches.
-  const searchUrl = `https://www.midiworld.com/search/${encodeURIComponent(song)}/`;
+  // MidiWorld search endpoint: https://www.midiworld.com/search/?q=...
+  const searchUrl = `https://www.midiworld.com/search/?q=${encodeURIComponent(song)}`;
   logInfo("MidiWorld search", { searchUrl });
   const searchResponse = await fetch(searchUrl);
   if (!searchResponse.ok) {
@@ -194,9 +200,17 @@ const fetchMidiFromMidiWorld = async (song) => {
   const html = await searchResponse.text();
   const $ = load(html);
   const candidates = [];
-  $("a[href$='.mid']").each((_, el) => {
+  $("a[href]").each((_, el) => {
     const href = $(el).attr("href");
-    if (href) {
+    if (!href) {
+      return;
+    }
+    const normalized = href.toLowerCase();
+    if (normalized.includes(".mid")) {
+      candidates.push(href);
+      return;
+    }
+    if (normalized.includes("midis/") || normalized.includes("midi/")) {
       candidates.push(href);
     }
   });
