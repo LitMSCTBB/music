@@ -310,7 +310,7 @@ export default function App() {
       handleMidiArrayBuffer(arrayBuffer, songQuery);
     } catch (err) {
       setError(err.message);
-      setStatus("No MIDI found. Drag and drop a file below.");
+      setStatus(err.message);
       setShowUpload(true);
     } finally {
       setIsLoading(false);

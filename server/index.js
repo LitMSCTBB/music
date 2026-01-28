@@ -77,6 +77,8 @@ const extractMidiLinks = (html) => {
     .filter((href) => href && href.toLowerCase().includes(".mid"));
 };
 
+const isMidiBuffer = (buffer) => buffer?.subarray(0, 4).toString("ascii") === "MThd";
+
 const fetchMidiFromBitMidi = async (song) => {
   // BitMidi search results include direct .mid links.
   const searchUrl = `https://bitmidi.com/search?q=${encodeURIComponent(song)}`;
@@ -103,8 +105,13 @@ const fetchMidiFromBitMidi = async (song) => {
     throw new Error("MIDI download failed");
   }
   const arrayBuffer = await midiResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!isMidiBuffer(buffer)) {
+    logInfo("BitMidi returned non-MIDI response", { midiUrl });
+    return null;
+  }
   return {
-    buffer: Buffer.from(arrayBuffer),
+    buffer,
     sourceUrl: midiUrl
   };
 };
@@ -135,8 +142,13 @@ const fetchMidiFromFreeMidi = async (song) => {
     return null;
   }
   const arrayBuffer = await midiResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!isMidiBuffer(buffer)) {
+    logInfo("FreeMidi returned non-MIDI response", { midiUrl });
+    return null;
+  }
   return {
-    buffer: Buffer.from(arrayBuffer),
+    buffer,
     sourceUrl: midiUrl
   };
 };
@@ -191,8 +203,13 @@ const fetchMidiFromMidiDb = async (song) => {
     return null;
   }
   const arrayBuffer = await midiResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!isMidiBuffer(buffer)) {
+    logInfo("MidiDB returned non-MIDI response", { midiUrl });
+    return null;
+  }
   return {
-    buffer: Buffer.from(arrayBuffer),
+    buffer,
     sourceUrl: midiUrl
   };
 };
@@ -238,8 +255,13 @@ const fetchMidiFromMidiWorld = async (song) => {
     return null;
   }
   const arrayBuffer = await midiResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!isMidiBuffer(buffer)) {
+    logInfo("MidiWorld returned non-MIDI response", { midiUrl });
+    return null;
+  }
   return {
-    buffer: Buffer.from(arrayBuffer),
+    buffer,
     sourceUrl: midiUrl
   };
 };
